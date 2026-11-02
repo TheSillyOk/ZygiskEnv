@@ -1,0 +1,34 @@
+name: Module CI
+
+on:
+  push:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
+
+      - name: Build
+        run: |
+          export NDK_PATH="$ANDROID_NDK_LATEST_HOME"
+          make -j$(nproc)
+
+      - name: Upload release
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build/out/ZygiskModuleExample-*-release.zip"
+          archive: false
+
+      - name: Upload debug
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build/out/ZygiskModuleExample-*-debug.zip"
+          archive: false
