@@ -1,4 +1,3 @@
-#include <sys/stat.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -30,27 +29,6 @@ char *get_string_data(JNIEnv *env, jstring *value) {
   return out;
 }
 
-char *get_package_name(char *data_dir, char *process_name) {
-  struct stat st;
-  if (stat(data_dir, &st) == -1) {
-    LOGW("Failed to stat data directory: %s", data_dir);
-
-    return process_name;
-  }
-
-  char *last_slash = strrchr(data_dir, '/');
-  if (!last_slash) {
-    LOGW("Failed to parse package name from data directory: %s", data_dir);
-
-    return process_name;
-  }
-
-  char *pkg_name = last_slash + 1;
-  LOGD("Package name: %s for process: %s", pkg_name, process_name);
-
-  return pkg_name;
-}
-
 /* INFO: This is the beginning of zygisk's functions
 those are triggered by it on each stage:
  * .preAppSpecialize: Called on app open; runs with elevated privileges before the process is sandboxed.
@@ -63,17 +41,9 @@ void pre_app_specialize(void *mod_data, struct AppSpecializeArgs *args) {
   api_table->setOption(api_table->impl, DLCLOSE_MODULE_LIBRARY);
 
   char *process_name = get_string_data(java_env, args->nice_name);
-  char *data_dir = get_string_data(java_env, args->app_data_dir);
 
-  char *package_name;
-  if (data_dir) {
-    package_name = get_package_name(data_dir, process_name);
-  } else {
-    package_name = process_name;
-  }
-
-  if (!process_name && !data_dir) {
-    LOGE("Failed to get process name and data dir");
+  if (!process_name) {
+    LOGE("Failed to get process name");
     goto free;
   }
 
@@ -85,17 +55,16 @@ void pre_app_specialize(void *mod_data, struct AppSpecializeArgs *args) {
     goto set;
 
   for (int i = 0; i < manager_count; i++) {
-    if (package_name == manager_pkgs[i]) goto set;
+    if (process_name == manager_pkgs[i]) goto set;
   }
   goto free;
 
 set:
   setenv("ZYGISK_ENABLED", "1", 1);
-  LOGI("Set ZYGISK_ENABLED for %s", package_name);
+  LOGI("Set ZYGISK_ENABLED for %s", process_name);
 
 free:
   if (process_name) free(process_name);
-  if (data_dir) free(data_dir);
 }
 
 void post_app_specialize(void *mod_data, const struct AppSpecializeArgs *args) {
