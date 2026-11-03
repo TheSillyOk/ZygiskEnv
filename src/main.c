@@ -13,7 +13,7 @@ struct api_table *api_table;
 JNIEnv *java_env;
 
 const char *manager_pkgs[] = {
-  "com.topjohnwu.magisk"
+  "com.topjohnwu.magisk",
   "io.github.vvb2060.magisk",
   "com.rifsxd.ksunext"
 };
@@ -55,8 +55,10 @@ void pre_app_specialize(void *mod_data, struct AppSpecializeArgs *args) {
     goto set;
 
   for (int i = 0; i < manager_count; i++) {
-    if (process_name == manager_pkgs[i]) goto set;
+    if (strcmp(process_name, manager_pkgs[i]) == 0)
+      goto set;
   }
+  LOGD("%s not on the list or root allowed", process_name);
   goto free;
 
 set:
