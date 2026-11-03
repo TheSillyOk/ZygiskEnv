@@ -13,6 +13,13 @@
 struct api_table *api_table;
 JNIEnv *java_env;
 
+const char *manager_pkgs[] = {
+  "com.topjohnwu.magisk"
+  "io.github.vvb2060.magisk",
+  "com.rifsxd.ksunext"
+};
+int manager_count = sizeof(manager_pkgs) / sizeof(manager_pkgs[0]);
+
 char *get_string_data(JNIEnv *env, jstring *value) {
   const char *str = (*env)->GetStringUTFChars(env, *value, 0);
   if (str == NULL) return NULL;
@@ -23,31 +30,25 @@ char *get_string_data(JNIEnv *env, jstring *value) {
   return out;
 }
 
-void pre_specialize(const char *process) {
-  /* Demonstrate connecting to to companion process
-  We ask the companion for a random number and a sum
-  of all random numbers sent so far */
-  unsigned r = 0;
-  unsigned n = 0;
+char *get_package_name(char *data_dir, char *process_name) {
+  struct stat st;
+  if (stat(data_dir, &st) == -1) {
+    LOGW("Failed to stat data directory: %s", data_dir);
 
-  int fd = api_table->connectCompanion(api_table->impl);
-  if (fd == -1) {
-    LOGE("Failed to connect to companion");
-    return;
+    return process_name;
   }
 
-  read(fd, &r, 1); // receive random number
-  write(fd, &r, 1); // reply upon number receival
+  char *last_slash = strrchr(data_dir, '/');
+  if (!last_slash) {
+    LOGW("Failed to parse package name from data directory: %s", data_dir);
 
-  read(fd, &n, sizeof(n)); // also get saved number
-  write(fd, &n, sizeof(n)); // reply back to companion
+    return process_name;
+  }
 
-  close(fd);
+  char *pkg_name = last_slash + 1;
+  LOGD("Package name: %s for process: %s", pkg_name, process_name);
 
-  LOGI("process=[%s], r=[%u], n=[%u]", process, r, n);
-
-  // Since we do not hook any functions, we should let Zygisk dlclose ourselves
-  api_table->setOption(api_table->impl, DLCLOSE_MODULE_LIBRARY);
+  return pkg_name;
 }
 
 /* INFO: This is the beginning of zygisk's functions
@@ -59,12 +60,42 @@ those are triggered by it on each stage:
 */
 void pre_app_specialize(void *mod_data, struct AppSpecializeArgs *args) {
   (void) mod_data;
+  api_table->setOption(api_table->impl, DLCLOSE_MODULE_LIBRARY);
 
-  char *process = get_string_data(java_env, args->nice_name);
+  char *process_name = get_string_data(java_env, args->nice_name);
+  char *data_dir = get_string_data(java_env, args->app_data_dir);
 
-  if (process != NULL) pre_specialize(process);
+  char *package_name;
+  if (data_dir) {
+    package_name = get_package_name(data_dir, process_name);
+  } else {
+    package_name = process_name;
+  }
 
-  free((void*)process);
+  if (!process_name && !data_dir) {
+    LOGE("Failed to get process name and data dir");
+    goto free;
+  }
+
+  uint32_t flags = api_table->getFlags(api_table->impl);
+  //if ((flags & PROCESS_ON_DENYLIST) == PROCESS_ON_DENYLIST)
+    //goto free;
+
+  if ((flags & PROCESS_GRANTED_ROOT) == PROCESS_GRANTED_ROOT)
+    goto set;
+
+  for (int i = 0; i < manager_count; i++) {
+    if (package_name == manager_pkgs[i]) goto set;
+  }
+  goto free;
+
+set:
+  setenv("ZYGISK_ENABLED", "1", 1);
+  LOGI("Set ZYGISK_ENABLED for %s", package_name);
+
+free:
+  if (process_name) free(process_name);
+  if (data_dir) free(data_dir);
 }
 
 void post_app_specialize(void *mod_data, const struct AppSpecializeArgs *args) {
@@ -73,8 +104,7 @@ void post_app_specialize(void *mod_data, const struct AppSpecializeArgs *args) {
 
 void pre_server_specialize(void *mod_data, struct ServerSpecializeArgs *args) {
   (void) mod_data; (void) args;
-
-  pre_specialize("system_server");
+  api_table->setOption(api_table->impl, DLCLOSE_MODULE_LIBRARY);
 }
 
 void post_server_specialize(void *mod_data, const struct ServerSpecializeArgs *args) {
@@ -87,7 +117,7 @@ void zygisk_module_entry(struct api_table *table, JNIEnv *env) {
 
   static struct module_abi abi = {
     .api_version = 5,
-    .impl = (void *)"zygisk_example",
+    .impl = (void *)"zygisk_env",
     .preAppSpecialize = pre_app_specialize,
     .postAppSpecialize = post_app_specialize,
     .preServerSpecialize = pre_server_specialize,
@@ -98,45 +128,5 @@ void zygisk_module_entry(struct api_table *table, JNIEnv *env) {
 }
 
 void zygisk_companion_entry(int fd) {
-  static int urandom;
-  static unsigned n;
-  unsigned r = 0;
-
-  if (urandom <= 0) {
-    urandom = open("/dev/urandom", O_RDONLY);
-    LOGD("companion urandom open [%d]", urandom);
-  }
-
-  if (urandom == -1) {
-    LOGE("companion failed to open urandom");
-    goto close;
-  }
-
-  read(urandom, &r, 1); // one random byte (0-255)
-  r = (r % 9) + 1; // turn into 1-9 range using modulus
-
-  LOGI("companion r=[%u]", r);
-  write(fd, &r, 1); // send random number
-
-  size_t reply = read(fd, &r, 1); // wait for reply
-  if (reply != 1) {
-    LOGE("companion received unexpected amount of bytes for random [%zu]", reply);
-    goto close;
-  }
-
-  n = (n + r) % 1000; // saved number + random number
-  // modulus is used to limit it to 999
-
-  LOGI("companion n=[%u]", n);
-  write(fd, &n, sizeof(n)); // send saved number
-
-  reply = read(fd, &r, sizeof(4)); // reuse "r" & "reply"
-  if (reply <= 0) {
-    LOGE("companion received unexpected amount of bytes for number [%zu]", reply);
-    goto close;
-  }
-
-close:
-  close(fd);
-  return;
+  (void) fd;
 }

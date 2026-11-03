@@ -4,7 +4,7 @@
 #include <android/log.h>
 #include <errno.h>
 
-#define TAG "ZygiskModuleExample"
+#define TAG "ZygiskEnv"
 
 #ifdef DEBUG
   #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)

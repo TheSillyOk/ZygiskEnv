@@ -8,8 +8,8 @@ VER_NAME ?= v1
 VER_CODE ?= $(shell git -C "$(ROOT_DIR)" rev-list HEAD --count 2>/dev/null || echo 1)
 COMMIT_HASH ?= $(shell git -C "$(ROOT_DIR)" rev-parse --verify --short HEAD 2>/dev/null || echo unknown)
 
-MODULE_ID ?= zygisk_module_example
-MODULE_NAME ?= ZygiskModuleExample
+MODULE_ID ?= zygisk_env
+MODULE_NAME ?= ZygiskEnv
 
 NDK_VERSION ?= 29.0.13113456
 ANDROID_HOME ?= $(HOME)/Android/Sdk
